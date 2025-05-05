@@ -22,7 +22,6 @@ A minimal system to control a DJI Tello drone using RabbitMQ and modern C++ on U
    Join `TELLO-XXXXXX` and verify connectivity:
    ```bash
    ping 192.168.10.1
-````
 
 2. **Start RabbitMQ**
 
