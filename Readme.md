@@ -36,7 +36,7 @@ A minimal system to control a DJI Tello drone using RabbitMQ and modern C++ on U
    Use `conan` and `cmake` to install dependencies and build:
 
    ```bash
-   conan install . --build=missing
+   conan install . --build=missing -s build_type=Debug --output-folder build/_deps
    cmake -B build
    cmake --build build
    ```

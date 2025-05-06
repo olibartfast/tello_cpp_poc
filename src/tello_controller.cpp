@@ -3,37 +3,73 @@
 #include <amqpcpp/libuv.h>
 #include <iostream>
 #include <memory>
+#include <string>
+#include <thread>
+#include <stdexcept>
+#include <chrono>
+#include <cmath>
 
 class TelloController {
 public:
     TelloController(std::string ip, int port, std::string rabbitmq_host, int rabbitmq_port)
         : loop_(create_loop()), handler_(loop_.get()),
           tello_(std::move(ip), port, *loop_) {
-        // Connect to Tello
         if (auto result = tello_.connect(); !result) {
             std::cerr << "Failed to connect to Tello" << std::endl;
             throw std::runtime_error("Tello connection failed");
         }
 
-        // Connect to RabbitMQ
-        AMQP::Address address(std::move(rabbitmq_host), rabbitmq_port, AMQP::Login("guest", "guest"), "/");
+        connect_to_rabbitmq(rabbitmq_host, rabbitmq_port);
+        setup_consumer();
+    }
+
+    void connect_to_rabbitmq(const std::string& host, int port) {
+        AMQP::Address address(host, port, AMQP::Login("guest", "guest"), "/");
+        std::cout << "Attempting to connect to RabbitMQ at " << host << ":" << port << "..." << std::endl;
         conn_ = std::make_unique<AMQP::TcpConnection>(&handler_, address);
         channel_ = std::make_unique<AMQP::TcpChannel>(conn_.get());
 
+        channel_->onError([this, host, port](const char* message) {
+            std::cerr << "Channel error: " << message << ". Reconnecting..." << std::endl;
+            conn_->close();
+            channel_.reset();
+            conn_.reset();
+            std::this_thread::sleep_for(std::chrono::seconds(1));
+            connect_to_rabbitmq(host, port);
+            setup_consumer();
+        });
+    }
+
+    void setup_consumer() {
         channel_->declareQueue("tello_commands", AMQP::durable)
             .onSuccess([this]() {
-                channel_->consume("tello_commands", AMQP::noack)
-                    .onReceived([this](const AMQP::Message& message, uint64_t, bool) {
-                        std::string_view cmd(message.body(), message.bodySize());
-                        std::cout << "Received command: " << cmd << std::endl;
-                        if (auto response = tello_.send_command(cmd)) {
-                            std::cout << "Tello response: " << *response << std::endl;
-                        } else {
-                            std::cerr << "Failed to send command: " << cmd << std::endl;
-                        }
+                channel_->declareQueue("tello_responses", AMQP::durable)
+                    .onSuccess([this]() {
+                        channel_->consume("tello_commands", AMQP::noack)
+                            .onSuccess([]() {
+                                std::cout << "Consumer started successfully" << std::endl;
+                            })
+                            .onReceived([this](const AMQP::Message& message, uint64_t, bool) {
+                                std::string_view cmd(message.body(), message.bodySize());
+                                std::cout << "Received command: " << cmd << std::endl;
+                                std::string response;
+                                if (auto result = tello_.send_command(cmd)) {
+                                    std::cout << "Tello response: " << *result << std::endl;
+                                    response = *result;
+                                } else {
+                                    std::cerr << "Failed to send command: " << cmd << std::endl;
+                                    response = "error";
+                                }
+                                AMQP::Envelope envelope(response.data(), response.size());
+                                envelope.setDeliveryMode(2);
+                                channel_->publish("", "tello_responses", envelope);
+                            })
+                            .onError([](const char* message) {
+                                std::cerr << "Consume error: " << message << std::endl;
+                            });
                     })
                     .onError([](const char* message) {
-                        std::cerr << "Consume error: " << message << std::endl;
+                        std::cerr << "Response queue declare error: " << message << std::endl;
                     });
             })
             .onError([](const char* message) {

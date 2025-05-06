@@ -5,9 +5,11 @@ project(tello_rabbitmq_poc CXX)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
+# Include Conan-generated files
+if(EXISTS ${CMAKE_BINARY_DIR}/_deps/conan_toolchain.cmake)
+    include(${CMAKE_BINARY_DIR}/_deps/conan_toolchain.cmake)
+endif()
 
-list(APPEND CMAKE_MODULE_PATH "${CMAKE_BINARY_DIR}/_deps/*.cmake")
-list(APPEND CMAKE_PREFIX_PATH "${CMAKE_BINARY_DIR}/_deps/*.cmake")
 
 find_package(amqpcpp REQUIRED)
 find_package(libuv)
